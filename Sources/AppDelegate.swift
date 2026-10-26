@@ -21,17 +21,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private(set) var shape: CameraShape
     private(set) var isVisible = true
     private var mirrored: Bool
+    private(set) var cameraTransparency: Double
+    private(set) var saveCameraTransparency: Bool
+    var recordingCameraOpacity: CGFloat { saveCameraTransparency ? 1 - cameraTransparency : 1 }
 
     init(previewMode: Bool = false, defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.previewMode = previewMode
-        camera = CameraController(defaults: defaults)
         let movie = RecordingWriter()
+        camera = CameraController(defaults: defaults, movie: movie)
         let audio = AudioController(defaults: defaults, movie: movie, previewMode: previewMode)
         self.audio = audio
         recorder = RecordingController(movie: movie, audio: audio)
         shape = CameraShape(rawValue: defaults.string(forKey: "shape") ?? "") ?? .circle
         mirrored = defaults.object(forKey: "mirrored") as? Bool ?? true
+        cameraTransparency = CameraTransparency.normalized(defaults.double(forKey: CameraTransparency.preferenceKey))
+        saveCameraTransparency = defaults.bool(forKey: CameraTransparency.recordingPreferenceKey)
         super.init()
     }
 
@@ -40,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         recordingArea = RecordingAreaPreferences.load(from: defaults)
 
         panel = CameraPanel(frame: restoredFrame())
+        panel.alphaValue = 1 - cameraTransparency
         panel.delegate = self
         preview = CameraPreviewView(frame: NSRect(origin: .zero, size: panel.frame.size))
         preview.shape = shape
@@ -213,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         defaults.set(panel.frame.width, forKey: "width")
         defaults.set(panel.frame.minX, forKey: "originX")
         defaults.set(panel.frame.minY, forKey: "originY")
+        updateCameraOverlay()
     }
 
     func resize(to width: CGFloat) {
@@ -409,6 +416,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         sizeItem.submenu = sizes
         menu.addItem(sizeItem)
 
+        let transparency = item("Transparency")
+        let transparencyMenu = NSMenu(title: "Transparency")
+        transparencyMenu.autoenablesItems = false
+        let control = NSMenuItem()
+        control.view = CameraTransparencyControl(transparency: cameraTransparency) { [weak self] value in
+            self?.setCameraTransparency(value)
+        }
+        transparencyMenu.addItem(control)
+        transparencyMenu.addItem(.separator())
+        let saveTransparency = item("Apply Transparency to Saved Video")
+        saveTransparency.view = PersistentMenuToggle(title: saveTransparency.title, enabled: saveCameraTransparency) { [weak self] enabled in
+            self?.setSaveCameraTransparency(enabled)
+        }
+        transparencyMenu.addItem(saveTransparency)
+        transparencyMenu.addItem(item("Reset Transparency to 0%", action: #selector(resetCameraTransparency)))
+        transparency.submenu = transparencyMenu
+        menu.addItem(transparency)
+
         let mirror = item("Mirror Camera", action: #selector(toggleMirror))
         mirror.state = mirrored ? .on : .off
         menu.addItem(mirror)
@@ -434,10 +459,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             camera.hide()
         }
         updateRecordingUI()
-        Task { await recorder.updateCameraWindow(isVisible ? CGWindowID(panel.windowNumber) : nil) }
     }
 
     private func updateRecordingUI() {
+        updateCameraOverlay()
         areaOverlay.isEditable = !recorder.phase.busy && !regionPicker.isSelecting && !isQuitting
         recordingPanel?.controls.update(phase: recorder.phase, status: recorder.status,
                                         areaName: recordingAreaName, selectingArea: regionPicker.isSelecting)
@@ -521,8 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func beginRecording(_ target: RecordingTarget) {
         guard !previewMode, !recorder.phase.busy else { return }
         Task {
-            await recorder.start(target: target, cameraWindowID: isVisible ? CGWindowID(panel.windowNumber) : nil)
-            await recorder.updateCameraWindow(isVisible ? CGWindowID(panel.windowNumber) : nil)
+            await recorder.start(target: target)
         }
     }
 
@@ -577,6 +601,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         mirrored.toggle()
         defaults.set(mirrored, forKey: "mirrored")
         preview.mirrored = mirrored
+        updateCameraOverlay()
+    }
+
+    func setCameraTransparency(_ value: Double) {
+        cameraTransparency = CameraTransparency.normalized(value)
+        defaults.set(cameraTransparency, forKey: CameraTransparency.preferenceKey)
+        panel.alphaValue = 1 - cameraTransparency
+        updateCameraOverlay()
+    }
+
+    @objc private func resetCameraTransparency() { setCameraTransparency(0) }
+
+    private func setSaveCameraTransparency(_ enabled: Bool) {
+        saveCameraTransparency = enabled
+        defaults.set(saveCameraTransparency, forKey: CameraTransparency.recordingPreferenceKey)
+        updateCameraOverlay()
+    }
+
+    private func updateCameraOverlay() {
+        guard let panel, recorder.phase.busy, isVisible, case .running = camera.state,
+              let target = recorder.target,
+              let screen = NSScreen.screens.first(where: { $0.displayID == target.displayID }) else {
+            recorder.movie.setCameraOverlay(nil)
+            return
+        }
+        let overlay = RecordingCameraOverlay(windowFrame: panel.frame, screenFrame: screen.frame,
+                                             target: target, shape: shape, mirrored: mirrored,
+                                             opacity: recordingCameraOpacity)
+        let output = CGRect(origin: .zero, size: target.pixelSize)
+        recorder.movie.setCameraOverlay(overlay.frame.intersects(output) ? overlay : nil)
     }
 
     @objc private func resetPosition() {
@@ -600,6 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let alert = NSAlert()
         alert.messageText = "Your camera, without the window."
         alert.informativeText = "Drag the camera to move it. Scroll to resize. Right-click the camera or recording panel for controls.\n\nYour recording area is remembered across restarts. Choose Select Area and drag a rectangle to prepare a region. The surrounding screen stays dimmed; your selected area stays clear. Drag the white corner dots to fine-tune the area before recording. Choose Whole Screen to remove the dimming.\n\nStart Recording when ready. Movies are saved automatically to your Desktop. Control–Option–Command–R starts/stops; Control–Option–Command–P pauses/resumes.\n\nAudio Input selects the microphone and offers an input-level slider and live meter.\n\nShow Recording Panel displays optional controls. The controls and dimming stay out of your recordings. Hide Camera lets you record just the screen."
+        alert.informativeText += "\n\nTransparency optionally lets you see through the camera while you work. Adjust it from the camera menu; Reset Transparency to 0% turns it off. Check Apply Transparency to Saved Video to use the same transparency in your recordings, or leave it unchecked to keep the recorded camera opaque. Both choices are remembered."
         alert.addButton(withTitle: "Got It")
         alert.runModal()
     }

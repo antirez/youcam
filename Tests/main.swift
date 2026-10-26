@@ -66,6 +66,7 @@ func runTests() async {
     expect(delegate.panel.collectionBehavior.contains(.canJoinAllSpaces), "Overlay follows desktops")
     expect(delegate.panel.collectionBehavior.contains(.fullScreenAuxiliary), "Overlay supports full-screen spaces")
     expect(!delegate.panel.canBecomeKey && !delegate.panel.canBecomeMain, "Overlay does not take keyboard focus")
+    checks += runCameraTransparencyTests(delegate, defaults: defaults)
 
     expect(delegate.recordingArea == .wholeScreen, "Recording area defaults to Whole Screen")
     let initialScreen = delegate.panel.screen ?? NSScreen.main!
@@ -270,11 +271,22 @@ func runTests() async {
 
     // A second launch should restore preferences using the saved frame.
     let savedFrame = delegate.panel.frame
+    delegate.setCameraTransparency(0.45)
+    let saveTransparency = delegate.makeMenu().item(withTitle: "Transparency")!.submenu!
+        .item(withTitle: "Apply Transparency to Saved Video")!.view as! PersistentMenuToggle
+    saveTransparency.performClick(nil)
     let restored = AppDelegate(previewMode: true, defaults: defaults)
     restored.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
     expect(restored.shape == .rectangle, "Shape is restored on the next launch")
     expect(!restored.preview.mirrored, "Mirroring is restored on the next launch")
     expect(restored.panel.frame == savedFrame, "Size and position are restored on the next launch")
+    expect(abs(restored.panel.alphaValue - 0.55) < 0.001 && restored.cameraTransparency == 0.45,
+           "Preview transparency is restored on the next launch")
+    expect(restored.saveCameraTransparency && abs(restored.recordingCameraOpacity - 0.55) < 0.001,
+           "The option to record transparency is restored on the next launch")
+    expect((restored.makeMenu().item(withTitle: "Transparency")!.submenu!
+        .item(withTitle: "Apply Transparency to Saved Video")!.view as! PersistentMenuToggle).state == .on,
+           "The saved-video checkmark matches the restored preference")
     restored.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
     restored.panel.orderOut(nil)
 

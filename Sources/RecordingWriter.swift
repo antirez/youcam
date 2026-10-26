@@ -1,7 +1,8 @@
 import AVFoundation
 import ScreenCaptureKit
+import CoreImage
 
-final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
+final class RecordingWriter: NSObject, SCStreamOutput, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     let queue = DispatchQueue(label: "app.youcam.movie", qos: .userInitiated)
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -11,6 +12,10 @@ final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
     private var lastVideoTime = -1.0
     private var lastAudioTime = -1.0
     private var lastImage: CVPixelBuffer?
+    private var lastScreen: CVPixelBuffer?
+    private var cameraImage: CVPixelBuffer?
+    private var cameraOverlay: RecordingCameraOverlay?
+    private let imageContext = CIContext(options: [.cacheIntermediates: false])
     private var failed = false
     private var accepting = false
     var onFailure: (@MainActor @Sendable (String) -> Void)?
@@ -35,7 +40,8 @@ final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
                     let pixelAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video,
                         sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                                                       kCVPixelBufferWidthKey as String: Int(size.width),
-                                                      kCVPixelBufferHeightKey as String: Int(size.height)])
+                                                      kCVPixelBufferHeightKey as String: Int(size.height),
+                                                      kCVPixelBufferIOSurfacePropertiesKey as String: [:]])
                     var microphone: AVAssetWriterInput?
                     if audio {
                         let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
@@ -57,6 +63,8 @@ final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
                     lastVideoTime = -1
                     lastAudioTime = -1
                     lastImage = nil
+                    lastScreen = nil
+                    cameraImage = nil
                     failed = false
                     accepting = true
                     continuation.resume()
@@ -80,6 +88,54 @@ final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
         guard host.isFinite else { return }
         if timeline.origin == nil { timeline.origin = host }
         guard let time = timeline.presentationTime(for: host) else { return }
+        lastScreen = image
+        composeAndAppend(at: time)
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        // Stamp arrival on the same host clock as screen/audio. Camera devices
+        // can use a different capture clock for their sample timestamps.
+        consumeCamera(sampleBuffer, at: hostSeconds())
+    }
+
+    // Camera frames also drive the movie while the desktop is static.
+    func consumeCamera(_ sample: CMSampleBuffer, at hostTime: Double) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard accepting, cameraOverlay != nil, hostTime.isFinite,
+              let time = timeline.presentationTime(for: hostTime), let image = sample.imageBuffer else { return }
+        cameraImage = image
+        guard time - lastVideoTime >= 1.0 / 60 else { return }
+        composeAndAppend(at: time)
+    }
+
+    func setCameraOverlay(_ overlay: RecordingCameraOverlay?, at hostTime: Double = hostSeconds()) {
+        queue.async { [self] in
+            guard cameraOverlay != overlay else { return }
+            cameraOverlay = overlay
+            if overlay == nil { cameraImage = nil }
+            guard accepting, hostTime.isFinite, let time = timeline.presentationTime(for: hostTime) else { return }
+            composeAndAppend(at: time)
+        }
+    }
+
+    private func composeAndAppend(at time: Double) {
+        guard let screen = lastScreen, time > lastVideoTime, videoInput?.isReadyForMoreMediaData == true else { return }
+        var image = screen
+        if let overlay = cameraOverlay, let camera = cameraImage {
+            guard let pool = adaptor?.pixelBufferPool else { return }
+            var output: CVPixelBuffer?
+            guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &output) == kCVReturnSuccess,
+                  let output else {
+                reportFailure("The camera frame could not be composed. Check available memory.")
+                return
+            }
+            let composite = RecordingCameraCompositor.composite(screen: CIImage(cvPixelBuffer: screen),
+                camera: CIImage(cvPixelBuffer: camera), overlay: overlay)
+            imageContext.render(composite, to: output, bounds: composite.extent,
+                                colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            image = output
+        }
         lastImage = image
         appendImage(image, at: time)
     }
@@ -174,8 +230,12 @@ final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
 
     private func reportFailure() {
         guard !failed, writer?.status == .failed else { return }
+        reportFailure(writer?.error?.localizedDescription ?? "The recording could not be written. Check available disk space.")
+    }
+
+    private func reportFailure(_ message: String) {
+        guard !failed else { return }
         failed = true
-        let message = writer?.error?.localizedDescription ?? "The recording could not be written. Check available disk space."
         if let onFailure { Task { @MainActor in onFailure(message) } }
     }
 
@@ -185,6 +245,8 @@ final class RecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable {
         audioInput = nil
         adaptor = nil
         lastImage = nil
+        lastScreen = nil
+        cameraImage = nil
         accepting = false
     }
 }

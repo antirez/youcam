@@ -1,7 +1,8 @@
 import AppKit
 
 // A persistent, click-through guide. The recording filter excludes every
-// YouCam window except the camera, so the shading and handles never enter the movie.
+// YouCam window, so the shading and handles never enter the movie. The camera
+// is composed separately from its original frames.
 @MainActor
 final class RecordingAreaOverlay {
     private(set) var window: NSPanel?

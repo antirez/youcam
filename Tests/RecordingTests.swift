@@ -99,7 +99,10 @@ func runRecordingTests() async throws {
         if index == 60 { movie.resume(at: 102) }
         let inPause = index >= 30 && index < 60
         await append(frame(at: time, red: inPause ? 255 : 0, green: index < 30 ? 200 : 0, blue: index >= 60 ? 200 : 0), to: movie)
-        let samples = (0..<1600).map { Float(sin(Double($0 + index * 1600) * 2 * .pi * 440 / 48000) * 0.2) }
+        let phaseStep = 2.0 * Double.pi * 440.0 / 48000.0
+        let samples = (0..<1600).map { offset -> Float in
+            Float(sin(Double(offset + index * 1600) * phaseStep) * 0.2)
+        }
         movie.appendAudio(PCMBuffer.make(samples: samples, at: CMTime(seconds: time, preferredTimescale: 48000))!)
         try await Task.sleep(for: .milliseconds(5))
     }
@@ -143,5 +146,89 @@ func runRecordingTests() async throws {
     expect(near(staticDuration, 2.5, tolerance: 0.05), "A static screen is extended to the real stop time")
     let noAudio = try await AVURLAsset(url: staticURL).loadTracks(withMediaType: .audio)
     expect(noAudio.isEmpty, "No Audio creates a movie without an audio track")
+
+    // Record synthetic desktop/camera sources: no camera or screen permission
+    // is needed to prove the saved movie contains an opaque, moving camera.
+    let cameraURL = directory.appendingPathComponent("opaque-camera.mov")
+    try? FileManager.default.removeItem(at: cameraURL)
+    let cameraTarget = RecordingTarget(displayID: 1, rect: CGRect(x: 0, y: 0, width: 320, height: 180), scale: 1, name: "Camera test")
+    let overlay = RecordingCameraOverlay(windowFrame: CGRect(x: 100, y: 30, width: 120, height: 120),
+        screenFrame: cameraTarget.rect, target: cameraTarget, shape: .circle, mirrored: false)
+    movie.setCameraOverlay(overlay)
+    try await movie.begin(url: cameraURL, size: cameraTarget.pixelSize, audio: false)
+    await append(frame(at: 400, red: 0, green: 200, blue: 0), to: movie)
+    func cameraFrame(at time: Double, blue: Bool = false) async {
+        let sample = frame(at: time, red: blue ? 0 : 200, green: 0, blue: blue ? 200 : 0)
+        await withCheckedContinuation { continuation in
+            movie.queue.async { movie.consumeCamera(sample.sample, at: time); continuation.resume() }
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    for index in 0..<10 { await cameraFrame(at: 400.05 + Double(index) / 30) }
+    movie.pause(at: 400.4)
+    await cameraFrame(at: 400.45, blue: true)
+    movie.resume(at: 400.6)
+    await cameraFrame(at: 400.65)
+    movie.setCameraOverlay(nil, at: 400.8)
+    await cameraFrame(at: 400.85, blue: true)
+    movie.setCameraOverlay(overlay, at: 400.9)
+    await cameraFrame(at: 401)
+    let translucentOverlay = RecordingCameraOverlay(windowFrame: CGRect(x: 100, y: 30, width: 120, height: 120),
+        screenFrame: cameraTarget.rect, target: cameraTarget, shape: .circle, mirrored: false, opacity: 0.4)
+    movie.setCameraOverlay(translucentOverlay, at: 401.3)
+    for index in 0..<5 { await cameraFrame(at: 401.34 + Double(index) / 30) }
+    movie.setCameraOverlay(overlay, at: 401.6)
+    await cameraFrame(at: 401.65)
+    try await movie.finish(at: 401.8)
+    let cameraAsset = AVURLAsset(url: cameraURL)
+    let cameraTrack = try await cameraAsset.loadTracks(withMediaType: .video)[0]
+    let cameraReader = try AVAssetReader(asset: cameraAsset)
+    let cameraOutput = AVAssetReaderTrackOutput(track: cameraTrack,
+        outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+    cameraReader.add(cameraOutput)
+    expect(cameraReader.startReading(), "The composited camera movie decodes")
+    var opaqueFrames = 0
+    var hiddenFrames = 0
+    var translucentFrames = 0
+    var restoredOpaqueFrames = 0
+    while let sample = cameraOutput.copyNextSampleBuffer() {
+        let image = sample.imageBuffer!
+        CVPixelBufferLockBaseAddress(image, .readOnly)
+        let bytes = CVPixelBufferGetBaseAddress(image)!.assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(image)
+        let center = 90 * stride + 160 * 4
+        expect(bytes[center] < 20, "Paused or hidden camera frames never enter the movie")
+        if bytes[center + 2] > 180 {
+            opaqueFrames += 1
+            expect(bytes[center + 1] < 20, "The saved camera is opaque; the green desktop cannot show through")
+        }
+        let time = sample.presentationTimeStamp.seconds
+        if time > 1.11 && time < 1.39 {
+            translucentFrames += 1
+            expect(bytes[center + 2] > 100 && bytes[center + 2] < 170
+                   && bytes[center + 1] > 120 && bytes[center + 1] < 190,
+                   "Enabling recorded transparency blends the chosen camera opacity with the desktop")
+        }
+        if time > 1.41 {
+            restoredOpaqueFrames += 1
+            expect(bytes[center + 2] > 180 && bytes[center + 1] < 20,
+                   "Disabling recorded transparency restores an opaque camera in the same movie")
+        }
+        if sample.presentationTimeStamp.seconds >= 0.6 && sample.presentationTimeStamp.seconds < 0.8 {
+            hiddenFrames += 1
+            expect(bytes[center + 1] > 180, "Hiding the camera restores the unobstructed screen")
+        }
+        let corner = 31 * stride + 101 * 4
+        expect(bytes[corner + 1] > 180 && bytes[corner + 2] < 20,
+               "The camera's circular corners preserve the desktop in the encoded movie")
+        CVPixelBufferUnlockBaseAddress(image, .readOnly)
+    }
+    expect(opaqueFrames >= 6, "Camera frames keep recording when no new desktop frames arrive")
+    expect(hiddenFrames > 0, "Visibility changes update a static desktop recording")
+    expect(translucentFrames >= 3 && restoredOpaqueFrames > 0,
+           "Recording transparency can be enabled and disabled without restarting capture")
+    expect(cameraReader.status == .completed, "The camera movie is completely readable")
+    let cameraDuration = try await cameraAsset.load(.duration).seconds
+    expect(near(cameraDuration, 1.6, tolerance: 0.05), "Camera composition preserves pause/resume timing")
     print("Passed \(checks) recording checks, including encoding and decoding MOV video/audio, pause/resume, clipping, and static frames.")
 }

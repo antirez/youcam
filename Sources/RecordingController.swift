@@ -25,7 +25,6 @@ final class RecordingController {
     private var stopWaiters: [CheckedContinuation<Void, Never>] = []
     private var timer: Timer?
     private var recordingURL: URL?
-    private var filterGeneration = 0
     private(set) var target: RecordingTarget?
     private(set) var phase = RecordingPhase.idle
     private(set) var elapsed = 0.0
@@ -60,7 +59,7 @@ final class RecordingController {
         }
     }
 
-    func start(target: RecordingTarget, cameraWindowID: CGWindowID?) async {
+    func start(target: RecordingTarget) async {
         guard phase == .idle else { return }
         phase = .starting
         self.target = target
@@ -77,7 +76,7 @@ final class RecordingController {
             guard let display = content.displays.first(where: { $0.displayID == target.displayID }) else {
                 throw RecordingFailure("The selected display is no longer connected. Select another recording area.")
             }
-            let filter = try makeFilter(content: content, display: display, cameraWindowID: cameraWindowID)
+            let filter = try makeFilter(content: content, display: display)
             try checkCancellation()
             try await audio.acquire("recording")
             try checkCancellation()
@@ -144,26 +143,13 @@ final class RecordingController {
         }
     }
 
-    private func makeFilter(content: SCShareableContent, display: SCDisplay, cameraWindowID: CGWindowID?) throws -> SCContentFilter {
+    private func makeFilter(content: SCShareableContent, display: SCDisplay) throws -> SCContentFilter {
         guard let application = content.applications.first(where: { $0.processID == ProcessInfo.processInfo.processIdentifier }) else {
             throw RecordingFailure("YouCam could not identify its control windows. Show the camera or recording panel and try again.")
         }
-        let camera = content.windows.filter { $0.windowID == cameraWindowID }
-        // Exclude the whole app, then include only the camera window. This also
-        // excludes menus, audio meters, selection overlays, and future panels.
-        return SCContentFilter(display: display, excludingApplications: [application], exceptingWindows: camera)
-    }
-
-    func updateCameraWindow(_ id: CGWindowID?) async {
-        guard let stream, let target, phase == .recording || phase == .paused else { return }
-        filterGeneration += 1
-        let request = filterGeneration
-        do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            guard self.stream === stream, request == filterGeneration,
-                  let display = content.displays.first(where: { $0.displayID == target.displayID }) else { return }
-            try await stream.updateContentFilter(makeFilter(content: content, display: display, cameraWindowID: id))
-        } catch { failed(error.localizedDescription) }
+        // The camera is composited from its original frames by RecordingWriter.
+        // Excluding its preview prevents preview transparency entering the movie.
+        return SCContentFilter(display: display, excludingApplications: [application], exceptingWindows: [])
     }
 
     func togglePause() {

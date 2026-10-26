@@ -40,6 +40,10 @@ enum CameraState: Equatable, Sendable {
 private final class CaptureDriver: @unchecked Sendable {
     let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "app.youcam.capture", qos: .userInitiated)
+    private let output = AVCaptureVideoDataOutput()
+    private let movie: RecordingWriter
+
+    init(movie: RecordingWriter) { self.movie = movie }
 
     func start(deviceID: String, completion: @escaping @MainActor @Sendable (String?) -> Void) {
         queue.async { [self] in
@@ -64,6 +68,26 @@ private final class CaptureDriver: @unchecked Sendable {
                 session.addInput(input)
                 if session.canSetSessionPreset(.hd1280x720) {
                     session.sessionPreset = .hd1280x720
+                }
+                if session.outputs.isEmpty {
+                    guard session.canAddOutput(output) else {
+                        session.commitConfiguration()
+                        session.stopRunning()
+                        Task { @MainActor in completion("This camera cannot supply recording frames. Try another camera.") }
+                        return
+                    }
+                    session.addOutput(output)
+                    output.alwaysDiscardsLateVideoFrames = true
+                    output.setSampleBufferDelegate(movie, queue: movie.queue)
+                }
+                let formats = output.availableVideoPixelFormatTypes
+                let format = [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                              kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                              kCVPixelFormatType_32BGRA].first(where: { formats.contains($0) })
+                if let format { output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: format] }
+                if let connection = output.connection(with: .video), connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
+                    connection.isVideoMirrored = false
                 }
                 session.commitConfiguration()
                 if !session.isRunning { session.startRunning() }
@@ -92,7 +116,7 @@ private final class CaptureDriver: @unchecked Sendable {
 
 @MainActor
 final class CameraController {
-    private let driver = CaptureDriver()
+    private let driver: CaptureDriver
     private let defaults: UserDefaults
     private let discovery = AVCaptureDevice.DiscoverySession(
         deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
@@ -113,7 +137,8 @@ final class CameraController {
     }
     var session: AVCaptureSession { driver.session }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, movie: RecordingWriter) {
+        driver = CaptureDriver(movie: movie)
         self.defaults = defaults
         let center = NotificationCenter.default
         for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
