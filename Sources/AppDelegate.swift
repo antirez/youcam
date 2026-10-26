@@ -109,6 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self.preview.display(self.camera.state)
             self.updateRecordingUI()
         }
+        camera.onFaceUpdate = { [weak self] face in
+            self?.preview.updateFaceTracking(face)
+        }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -412,6 +415,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let mirror = item("Mirror Camera", action: #selector(toggleMirror))
         mirror.state = mirrored ? .on : .off
         menu.addItem(mirror)
+        let centerStage = item("Center Stage (Follow Face)", action: #selector(toggleCenterStage))
+        centerStage.state = camera.centerStageEnabled ? .on : .off
+        menu.addItem(centerStage)
         menu.addItem(item("Move to Bottom Right", action: #selector(resetPosition)))
         menu.addItem(.separator())
 
@@ -566,6 +572,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         self.shape = shape
         defaults.set(shape.rawValue, forKey: "shape")
         preview.shape = shape
+        camera.setShape(shape)
         resize(to: panel.frame.width)
     }
 
@@ -577,6 +584,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         mirrored.toggle()
         defaults.set(mirrored, forKey: "mirrored")
         preview.mirrored = mirrored
+    }
+
+    @objc func toggleCenterStage() {
+        camera.setCenterStage(!camera.centerStageEnabled)
     }
 
     @objc private func resetPosition() {

@@ -203,6 +203,38 @@ func runTests() async {
     expect(delegate.preview.mirrored, "Camera is mirrored by default")
     delegate.toggleMirror()
     expect(!delegate.preview.mirrored && !defaults.bool(forKey: "mirrored"), "Mirror toggle changes and saves preference")
+    // Center Stage menu toggle, persistence, and no-black-bar geometry bounds across all shapes
+    let csItem = delegate.makeMenu().item(withTitle: "Center Stage (Follow Face)")!
+    expect(csItem.state == .on && defaults.object(forKey: "centerStage") == nil, "Center Stage is enabled by default")
+    expect(app.sendAction(csItem.action!, to: csItem.target, from: csItem), "Center Stage menu action is connected")
+    expect(!defaults.bool(forKey: "centerStage") && delegate.makeMenu().item(withTitle: "Center Stage (Follow Face)")?.state == .off,
+           "Center Stage toggle disables and saves preference")
+
+    for shape in CameraShape.allCases {
+        let shapeChoice = NSMenuItem()
+        shapeChoice.representedObject = shape.rawValue
+        delegate.selectShape(shapeChoice)
+        delegate.preview.layoutSubtreeIfNeeded()
+        let maskBounds = delegate.preview.bounds
+
+        for isNative in [false, true] {
+            for extremePoint in [CGPoint(x: 0.01, y: 0.01), CGPoint(x: 0.99, y: 0.99), CGPoint(x: 0.01, y: 0.99), CGPoint(x: 0.99, y: 0.01)] {
+                delegate.preview.updateFaceTracking(DetectedFace(
+                    center: extremePoint,
+                    size: CGSize(width: 0.25, height: 0.35),
+                    isNativeCenterStageCamera: isNative
+                ))
+                let videoFrame = delegate.preview.previewLayer.frame
+                expect(videoFrame.minX <= 0.5 && videoFrame.maxX >= maskBounds.width - 0.5,
+                       "\(shape) (native=\(isNative)) horizontal pan at \(extremePoint) never exposes black bars")
+                expect(videoFrame.minY <= 0.5 && videoFrame.maxY >= maskBounds.height - 0.5,
+                       "\(shape) (native=\(isNative)) vertical pan at \(extremePoint) never exposes black bars")
+            }
+        }
+        delegate.preview.updateFaceTracking(nil)
+        expect(CATransform3DIsIdentity(delegate.preview.previewLayer.transform),
+               "\(shape) clearing face tracking resets transform to identity")
+    }
     delegate.toggleVisibility()
     expect(!delegate.isVisible && !delegate.panel.isVisible, "Hide Camera hides the overlay")
     expect(delegate.makeMenu().item(withTitle: "Show Camera") != nil, "Hidden camera can be restored from the menu")
