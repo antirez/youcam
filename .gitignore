@@ -1,3 +1,27 @@
 .build/
 build/
 .DS_Store
+__pycache__/
+linux/*.o
+linux/youcam
+linux/tests
+linux/test-media
+linux/test-segment
+linux/make-icon
+linux/icons/
+linux/facefinder.h
+linux/selfie_*.h
+
+# Packages
+*.deb
+*.buildinfo
+*.changes
+linux/debian/youcam/
+linux/debian/.debhelper/
+linux/debian/debhelper-build-stamp
+linux/debian/files
+linux/debian/*.substvars
+linux/youcam-*.tar.gz
+linux/*.pkg.tar.zst
+linux/rpmbuild/
+linux/archbuild/
