@@ -1,0 +1,5 @@
+youcam (1.0~beta1) unstable; urgency=medium
+
+  * First Linux release: C port of the macOS app (see CHANGELOG.md).
+
+ -- Giuseppe Patanè <giuseppe.patane@gmail.com>  Tue, 03 Nov 2026 12:34:14 +0100

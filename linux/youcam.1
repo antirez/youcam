@@ -1,0 +1,92 @@
+.TH YOUCAM 1 "November 2026" "youcam 1.0-beta1" "User Commands"
+.SH NAME
+youcam \- floating camera overlay and screen recorder
+.SH SYNOPSIS
+.B youcam
+.RB [ \-\-smoke\-test ]
+.RB [ \-\-record\-test
+.IR seconds ]
+.RB [ \-\-snapshot
+.IR dir ]
+.SH DESCRIPTION
+.B youcam
+shows the camera in a floating window without a frame (a circle, square or
+rectangle) that stays above other windows, and records the screen with the
+camera and the microphone.
+Drag the camera to move it and scroll on it to resize it.
+Right\-click it (or Control\-click) for every control: camera, microphone,
+shape, recording area, transparency, Center Stage, background, recording
+format and the recording panel.
+.PP
+Movies are saved to the Desktop as
+.IR YouCam\-Recording\-<date>\-<time>.mov
+(or the chosen recording format).
+Running
+.B youcam
+again while it is open brings back a hidden camera.
+.SH OPTIONS
+.TP
+.B \-\-smoke\-test
+Start, open the camera and quit after a few seconds; for checks.
+.TP
+.BI \-\-record\-test " seconds"
+Make a real recording of that length without dialogs, save it and quit.
+.TP
+.BI \-\-snapshot " dir"
+Render the windows to PNG files in
+.I dir
+and quit.
+.SH GLOBAL SHORTCUTS
+.TP
+.B Control\-Alt\-Super\-R
+Start or stop recording.
+.TP
+.B Control\-Alt\-Super\-P
+Pause or resume recording.
+.PP
+They go through the GlobalShortcuts portal; GNOME asks to confirm them once.
+.SH ENVIRONMENT
+.TP
+.B YOUCAM_ENCODER
+.BR va ,
+.B nvenc
+or
+.BR x264 :
+force a video encoder instead of the first one available in that order.
+.TP
+.B YOUCAM_CAPTURE
+.B portal
+or
+.BR mutter :
+force the ScreenCast portal or Mutter's screen cast for recording.
+.TP
+.B YOUCAM_CONFIG
+Use this preferences file instead of the default one.
+.TP
+.B YOUCAM_SNAPSHOT_PROJECT
+With
+.BR \-\-snapshot ,
+a project
+.I .youcam.mkv
+whose Choose After Recording window is also rendered.
+.SH FILES
+.TP
+.I ~/.config/youcam/prefs.ini
+Preferences.
+.TP
+.I ~/.local/share/youcam/room\-*.png
+The empty room learned for each camera (Background \(-> Learn Empty Room).
+.TP
+.I ~/.local/share/youcam/pending/
+Recordings kept for Choose After Recording.
+.SH NOTES
+On GNOME the
+.B YouCam Capture Exclusion
+Shell extension keeps the recording panel and area guides out of the
+recording. Log out and in once after installing, then run
+.BR "gnome\-extensions enable youcam\-capture\-exclusion@youcam.app" .
+The tray icon needs the AppIndicator extension on GNOME.
+.SH SEE ALSO
+.BR gnome\-extensions (1)
+.PP
+https://github.com/antirez/youcam

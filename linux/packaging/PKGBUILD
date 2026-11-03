@@ -1,0 +1,35 @@
+# Maintainer: Giuseppe Patanè <giuseppe.patane@gmail.com>
+pkgname=youcam
+pkgver=1.0beta1
+_tag=1.0-beta1   # make dist archive name
+pkgrel=1
+pkgdesc='Floating camera overlay and screen recorder'
+arch=('x86_64' 'aarch64')
+url='https://github.com/antirez/youcam'
+license=('MIT' 'Apache-2.0')
+depends=('gtk3' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-ugly' 'gst-libav'
+         'gst-plugin-pipewire' 'xdg-desktop-portal')
+makedepends=('xxd')
+optdepends=('gst-plugins-bad: noise reduction and GPU encoding'
+            'wireplumber: automatic microphone level')
+# make dist: the linux/ directory plus LICENSE.
+source=("$pkgname-$_tag.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$_tag"
+  make
+}
+
+check() {
+  cd "$pkgname-$_tag"
+  make check
+}
+
+package() {
+  cd "$pkgname-$_tag"
+  make install DESTDIR="$pkgdir" PREFIX=/usr
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 vendor/pico/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.pico"
+  install -Dm644 vendor/selfie/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.selfie"
+}

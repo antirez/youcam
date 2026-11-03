@@ -1,0 +1,22 @@
+Source: youcam
+Section: video
+Priority: optional
+Maintainer: Giuseppe Patanè <giuseppe.patane@gmail.com>
+Build-Depends: debhelper-compat (= 13), pkgconf, xxd | vim-common,
+ libgtk-3-dev, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/antirez/youcam
+Rules-Requires-Root: no
+
+Package: youcam
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, gstreamer1.0-plugins-good,
+ gstreamer1.0-plugins-ugly, gstreamer1.0-libav, gstreamer1.0-pipewire,
+ xdg-desktop-portal
+Recommends: gstreamer1.0-plugins-bad, wireplumber
+Description: floating camera overlay and screen recorder
+ A frameless floating camera (circle, square or rectangle) with a screen
+ recorder for the whole screen, a display or an area. Camera transparency,
+ face tracking, noise reduction, automatic microphone level and background
+ removal, all on the CPU. Includes a GNOME Shell extension that keeps the
+ recording panel out of the recording.

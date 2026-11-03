@@ -2,6 +2,8 @@
 
 A native Mac camera overlay and screen recorder. A floating camera without a window frame, with selectable cameras, shapes, and microphone input.
 
+A Linux (GNOME) port lives in [`linux/`](linux/README.md).
+
 ## Build and run
 
 Requires macOS 14+ and Xcode Command Line Tools with Swift 6. No external dependencies.

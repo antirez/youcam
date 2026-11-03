@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=YouCam
+Comment=Floating camera overlay and screen recorder
+Exec=@BINDIR@/youcam
+Icon=youcam
+Categories=AudioVideo;Video;Recorder;
+StartupNotify=false

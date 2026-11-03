@@ -1,0 +1,7 @@
+{
+  "uuid": "youcam-capture-exclusion@youcam.app",
+  "name": "YouCam Capture Exclusion",
+  "description": "Keeps YouCam's recording panel and guides out of YouCam's own screen recordings, while they stay visible on screen.",
+  "shell-version": ["51"],
+  "url": "https://github.com/antirez/youcam"
+}
